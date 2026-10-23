@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RidePulse — Predict Demand. Move Smarter.</title>
+  <meta name="description" content="RidePulse predicts ride-share demand across NYC geographic zones using K-Means clustering and XGBoost machine learning.">
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <style>
+    /* Map tooltip */
+    .leaflet-popup-content-wrapper {
+      border-radius: 10px !important;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.15) !important;
+      font-family: 'Inter', sans-serif;
+    }
+    .leaflet-popup-content { margin: 10px 14px; font-size: 0.83rem; color: #374151; }
+    .leaflet-popup-content strong { color: #059669; }
+    /* Override Leaflet default tile attribution text size */
+    .leaflet-control-attribution { font-size: 9px !important; }
+  </style>
+</head>
+<body>
+
+<!-- ── Navigation ──────────────────────────────────────── -->
+<header class="navbar">
+  <div class="nav-inner">
+    <a href="/" class="brand">
+      <div class="brand-icon">🚖</div>
+      <span class="brand-name">Ride<span>Pulse</span></span>
+    </a>
+    <nav class="nav-links">
+      <a href="/" class="active" id="nav-forecast">Demand Forecast</a>
+      <a href="/insights" id="nav-insights">ML Insights</a>
+      <a href="#about-section" id="nav-about">About</a>
+      <a href="#predict-section" class="nav-cta" id="nav-cta">Predict Now</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ── Hero ────────────────────────────────────────────── -->
+<section class="hero">
+  <div class="hero-eyebrow">
+    <span>📍</span>
+    NYC Geospatial Ride-Share Intelligence · Kaggle Taxi Dataset · 20 Zones
+  </div>
+  <h1>Predict Demand.<br><span class="accent">Move Smarter.</span></h1>
+  <p>
+    Select a geographic zone, date, and time to get an instant ride demand forecast powered by our XGBoost model trained on 100,000 NYC taxi trips.
+  </p>
+</section>
+
+<!-- ── Main Content ────────────────────────────────────── -->
+<div class="main-grid" id="predict-section">
+
+  <!-- Left: Prediction Panel -->
+  <aside>
+    <div class="predict-panel">
+      <div class="panel-header">
+        <div class="panel-header-icon">🔮</div>
+        <div>
+          <h2>Demand Forecast</h2>
+          <p>Enter a zone, date &amp; time to predict</p>
+        </div>
+      </div>
+
+      <div class="panel-body">
+        <form id="prediction-form" novalidate>
+
+          <div class="form-group">
+            <label class="form-label" for="zone-select">Geographic Zone</label>
+            <select id="zone-select" class="input-control" required>
+              {% for z in zones %}
+              <option value="{{ z.zone }}">Zone {{ z.zone }} — {{ z.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="date-time-row">
+            <div class="form-group">
+              <label class="form-label" for="date-input">Date</label>
+              <input type="date" id="date-input" class="input-control" required
+                     min="2014-01-01" value="2026-10-24">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="time-input">Time</label>
+              <select id="time-input" class="input-control" required>
+                {% for h in range(24) %}
+                <option value="{{ '%02d'|format(h) }}:00"
+                  {% if h == 18 %}selected{% endif %}>
+                  {{ '%02d'|format(h) }}:00
+                  {% if h < 6 %} (Night)
+                  {% elif h < 12 %} (Morning)
+                  {% elif h < 17 %} (Afternoon)
+                  {% elif h < 21 %} (Evening)
+                  {% else %} (Night)
+                  {% endif %}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <button type="submit" class="btn-predict" id="predict-btn">
+            <span>Predict Demand</span>
+            <div class="spinner" id="predict-spinner"></div>
+          </button>
+        </form>
+
+        <!-- Result Area -->
+        <div class="result-area">
+
+          <!-- Empty state -->
+          <div class="result-empty" id="result-empty">
+            <div class="re-icon">📊</div>
+            <p>Choose a zone, date, and time above, then click <strong>Predict Demand</strong>.</p>
+          </div>
+
+          <!-- Error state -->
+          <div class="result-error" id="result-error" role="alert"></div>
+
+          <!-- Result card -->
+          <div class="result-card" id="result-card">
+            <div class="result-card-top">
+              <div class="result-zone-row">
+                <div>
+                  <div class="result-zone-label">Forecast Zone</div>
+                  <div class="result-zone-name" id="res-zone-name">—</div>
+                </div>
+                <div class="result-datetime" id="res-datetime">—</div>
+              </div>
+              <div class="result-number-row">
+                <div class="result-big-number" id="res-rides">—</div>
+                <div class="result-unit">predicted<br>rides / hr</div>
+              </div>
+            </div>
+
+            <div class="result-card-body">
+              <div class="demand-badge" id="demand-badge">— Demand</div>
+              <div class="result-explanation" id="res-explanation">—</div>
+
+              <div class="features-grid">
+                <div class="feat-chip">
+                  <div class="feat-chip-label">Hour</div>
+                  <div class="feat-chip-val" id="feat-hour">—</div>
+                </div>
+                <div class="feat-chip">
+                  <div class="feat-chip-label">Day</div>
+                  <div class="feat-chip-val" id="feat-day">—</div>
+                </div>
+                <div class="feat-chip">
+                  <div class="feat-chip-label">Lag 1-hr</div>
+                  <div class="feat-chip-val" id="feat-lag1">—</div>
+                </div>
+                <div class="feat-chip">
+                  <div class="feat-chip-label">Lag 24-hr</div>
+                  <div class="feat-chip-val" id="feat-lag24">—</div>
+                </div>
+                <div class="feat-chip" style="grid-column: span 2;">
+                  <div class="feat-chip-label">24-hr Rolling Mean</div>
+                  <div class="feat-chip-val" id="feat-roll24">—</div>
+                </div>
+              </div>
+
+              <button class="btn-reset" id="btn-reset">← Run Another Prediction</button>
+            </div>
+          </div>
+
+        </div><!-- result-area -->
+      </div><!-- panel-body -->
+    </div><!-- predict-panel -->
+  </aside>
+
+  <!-- Right: Map + Zone List -->
+  <div class="right-col">
+
+    <!-- Interactive Map -->
+    <div class="map-section">
+      <div class="section-header">
+        <div class="section-header-left">
+          <h3>🗺️ Demand Zone Map</h3>
+          <p>Click a zone on the map to select it, or select below.</p>
+        </div>
+        <div class="map-legend">
+          <div class="legend-item">
+            <div class="legend-dot" style="background:#059669"></div>
+            High demand
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background:#f59e0b"></div>
+            Medium
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background:#3b82f6"></div>
+            Low demand
+          </div>
+        </div>
+      </div>
+      <div id="demand-map"></div>
+    </div>
+
+    <!-- Zone Ranking List -->
+    <div class="zones-section">
+      <div class="section-header">
+        <div class="section-header-left">
+          <h3>📊 Zones by Historical Demand</h3>
+          <p>Average hourly rides (Kaggle Taxi Dataset). Click to select a zone.</p>
+        </div>
+      </div>
+      <div class="zones-list" id="zones-list">
+        {% set max_demand = zones[0].avg_demand %}
+        {% for z in zones %}
+        <div class="zone-item" data-zone="{{ z.zone }}" id="zone-item-{{ z.zone }}"
+             onclick="selectZone({{ z.zone }})">
+          <div class="zone-rank {% if loop.index <= 3 %}top{% endif %}">{{ loop.index }}</div>
+          <div class="zone-info">
+            <div class="zone-name">{{ z.name }}</div>
+            <div class="zone-id">Zone {{ z.zone }} · Historical avg</div>
+          </div>
+          <div class="zone-bar-wrap">
+            <div class="zone-bar-bg">
+              <div class="zone-bar-fill" style="width: {{ (z.avg_demand / max_demand * 100) | round }}%"></div>
+            </div>
+            <div class="zone-demand-val">{{ "%.2f"|format(z.avg_demand) }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+  </div><!-- right-col -->
+</div><!-- main-grid -->
+
+<!-- About section -->
+<section id="about-section" style="background: #fff; border-top: 1px solid var(--border); padding: 3rem 1.5rem;">
+  <div style="max-width: 800px; margin: 0 auto; text-align: center;">
+    <div class="hero-eyebrow" style="margin-bottom: 1.25rem;">About This Project</div>
+    <h2 style="font-family: var(--font-display); font-size: 1.75rem; font-weight: 900; color: var(--text-dark); margin-bottom: 1rem; letter-spacing: -0.02em;">
+      Smart Cities & Logistics — End-to-End ML Pipeline
+    </h2>
+    <p style="color: var(--text-muted); font-size: 0.97rem; margin-bottom: 1.5rem;">
+      RidePulse is a 5th-semester Data Structures & Algorithms academic project demonstrating an end-to-end machine learning pipeline for geospatial demand forecasting. It processes NYC taxi trip data, clusters pickup locations into 20 geographic zones using K-Means, engineers time-series features (lag, rolling mean), and trains an XGBoost regression model — all without data leakage.
+    </p>
+    <a href="/insights" style="display: inline-flex; align-items: center; gap: 0.5rem; background: var(--primary); color: #fff; padding: 0.75rem 1.5rem; border-radius: var(--radius-md); font-weight: 700; box-shadow: var(--shadow-em); transition: background 0.2s; text-decoration: none;">
+      Explore ML Insights →
+    </a>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="site-footer">
+  <p>RidePulse — Smart Cities &amp; Logistics: Geospatial Ride-Share Demand Forecasting · Academic Project · 5th Semester</p>
+</footer>
+
+<!-- Image Modal -->
+<div class="modal-overlay" id="image-modal" onclick="closeModal()">
+  <div class="modal-content" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeModal()">✕</button>
+    <img class="modal-img" id="modal-img" src="" alt="Chart preview">
+  </div>
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+<script>
+/* ========================================================
+   Zone data (injected from Flask)
+   ======================================================== */
+const ZONES = [
+  {% for z in zones %}
+  { zone: {{ z.zone }}, lat: {{ z.lat }}, lon: {{ z.lon }}, name: "{{ z.name }}", avg_demand: {{ z.avg_demand }} }{% if not loop.last %},{% endif %}
+  {% endfor %}
+];
+const MAX_DEMAND = Math.max(...ZONES.map(z => z.avg_demand));
+
+/* ========================================================
+   Leaflet Map
+   ======================================================== */
+const map = L.map('demand-map', {
+  center: [40.755, -73.980],
+  zoom: 11,
+  zoomControl: true,
+});
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  maxZoom: 18,
+}).addTo(map);
+
+// Color scale: low→blue, medium→amber, high→emerald
+function demandColor(avg) {
+  if (avg >= 0.9) return '#059669';
+  if (avg >= 0.5) return '#f59e0b';
+  return '#3b82f6';
+}
+
+const zoneMarkers = {};
+
+ZONES.forEach(z => {
+  const radius = 8 + (z.avg_demand / MAX_DEMAND) * 14;
+  const color  = demandColor(z.avg_demand);
+
+  const circle = L.circleMarker([z.lat, z.lon], {
+    radius,
+    fillColor: color,
+    color: '#fff',
+    weight: 2,
+    opacity: 1,
+    fillOpacity: 0.85,
+  });
+
+  circle.bindPopup(`
+    <strong>Zone ${z.zone} — ${z.name}</strong><br>
+    Avg demand: <strong>${z.avg_demand.toFixed(2)} rides/hr</strong><br>
+    <span style="color:#6b7280;font-size:0.8em;">Lat: ${z.lat.toFixed(4)}, Lon: ${z.lon.toFixed(4)}</span>
+  `);
+
+  circle.on('click', () => selectZone(z.zone));
+  circle.addTo(map);
+  zoneMarkers[z.zone] = circle;
+
+  // Zone label
+  L.marker([z.lat, z.lon], {
+    icon: L.divIcon({
+      html: `<div style="color:#fff;font-size:9px;font-weight:800;text-shadow:0 1px 3px rgba(0,0,0,0.8);">Z${z.zone}</div>`,
+      iconSize: [20, 16],
+      iconAnchor: [10, 8],
+      className: '',
+    }),
+    interactive: false,
+  }).addTo(map);
+});
+
+let selectedMarker = null;
+
+function highlightMapZone(zoneId) {
+  if (selectedMarker !== null) {
+    const prev = zoneMarkers[selectedMarker];
+    if (prev) {
+      prev.setStyle({ weight: 2, color: '#fff', radius: 8 + (ZONES.find(z=>z.zone===selectedMarker).avg_demand / MAX_DEMAND) * 14 });
+    }
+  }
+  selectedMarker = zoneId;
+  const marker = zoneMarkers[zoneId];
+  if (marker) {
+    marker.setStyle({ weight: 3.5, color: '#064e3b', radius: 16 });
+    marker.openPopup();
+    const zoneObj = ZONES.find(z => z.zone === zoneId);
+    if (zoneObj) map.setView([zoneObj.lat, zoneObj.lon], 12, { animate: true });
+  }
+}
+
+/* ========================================================
+   Zone Selection (synced between map, list, dropdown)
+   ======================================================== */
+function selectZone(zoneId) {
+  zoneId = parseInt(zoneId);
+  // Update dropdown
+  document.getElementById('zone-select').value = zoneId;
+  // Update zone list
+  document.querySelectorAll('.zone-item').forEach(el => el.classList.remove('active'));
+  const el = document.getElementById(`zone-item-${zoneId}`);
+  if (el) {
+    el.classList.add('active');
+    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  // Update map
+  highlightMapZone(zoneId);
+}
+
+document.getElementById('zone-select').addEventListener('change', function() {
+  selectZone(parseInt(this.value));
+});
+
+// Initialize highlight on default selection
+const defaultZone = parseInt(document.getElementById('zone-select').value);
+if (!isNaN(defaultZone)) highlightMapZone(defaultZone);
+
+/* ========================================================
+   Prediction Form
+   ======================================================== */
+const form        = document.getElementById('prediction-form');
+const predictBtn  = document.getElementById('predict-btn');
+const spinner     = document.getElementById('predict-spinner');
+const resEmpty    = document.getElementById('result-empty');
+const resError    = document.getElementById('result-error');
+const resCard     = document.getElementById('result-card');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  await runPrediction();
+});
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  resCard.style.display  = 'none';
+  resError.style.display = 'none';
+  resEmpty.style.display = 'block';
+});
+
+async function runPrediction() {
+  const zone = parseInt(document.getElementById('zone-select').value);
+  const date = document.getElementById('date-input').value;
+  const time = document.getElementById('time-input').value;
+
+  if (!date || !time) {
+    showError('Please select both a date and a time.');
+    return;
+  }
+
+  const datetime = `${date}T${time}:00`;
+
+  setLoading(true);
+
+  try {
+    const resp = await fetch('/api/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone, datetime }),
+    });
+    const data = await resp.json();
+
+    if (data.status === 'success') {
+      showResult(data);
+    } else {
+      showError(data.message || 'Prediction failed. Please try again.');
+    }
+  } catch (err) {
+    showError('Could not reach the forecast server. Please check your connection.');
+  } finally {
+    setLoading(false);
+  }
+}
+
+function setLoading(loading) {
+  predictBtn.disabled = loading;
+  spinner.style.display = loading ? 'block' : 'none';
+  const btnText = predictBtn.querySelector('span');
+  btnText.textContent = loading ? 'Forecasting…' : 'Predict Demand';
+}
+
+function showError(msg) {
+  resEmpty.style.display  = 'none';
+  resCard.style.display   = 'none';
+  resError.style.display  = 'block';
+  resError.textContent    = '⚠ ' + msg;
+}
+
+function showResult(data) {
+  resEmpty.style.display  = 'none';
+  resError.style.display  = 'none';
+  resCard.style.display   = 'block';
+
+  // Header
+  document.getElementById('res-zone-name').textContent =
+    `Zone ${data.zone} — ${data.zone_name}`;
+
+  const dt = new Date(data.datetime.replace('T', ' '));
+  const dtStr = dt.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' })
+              + ' · ' + data.features.hour_of_day;
+  document.getElementById('res-datetime').textContent = dtStr;
+
+  // Big number
+  document.getElementById('res-rides').textContent = data.approx_rides;
+
+  // Demand badge
+  const badge = document.getElementById('demand-badge');
+  const level = data.demand_level;
+  badge.textContent = `${levelIcon(level)} ${level} Demand`;
+  badge.className   = `demand-badge ${level.toLowerCase()}`;
+
+  // Explanation
+  document.getElementById('res-explanation').textContent = data.explanation;
+
+  // Feature chips
+  document.getElementById('feat-hour').textContent  = data.features.hour_of_day;
+  document.getElementById('feat-day').textContent   = data.features.day_name + (data.features.is_weekend.includes('Yes') ? ' 🏖' : '');
+  document.getElementById('feat-lag1').textContent  = data.features.lag_1.toFixed(2) + ' rides';
+  document.getElementById('feat-lag24').textContent = data.features.lag_24.toFixed(2) + ' rides';
+  document.getElementById('feat-roll24').textContent= data.features.rolling_mean_24.toFixed(2) + ' avg rides';
+
+  // Scroll result into view
+  resCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  // Highlight zone on map too
+  highlightMapZone(data.zone);
+}
+
+function levelIcon(level) {
+  if (level === 'High')   return '🔴';
+  if (level === 'Medium') return '🟡';
+  return '🔵';
+}
+
+/* ========================================================
+   Modal
+   ======================================================== */
+function openModal(src) {
+  document.getElementById('modal-img').src = src;
+  document.getElementById('image-modal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('image-modal').classList.remove('open');
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// Sync zone list initial active state
+document.addEventListener('DOMContentLoaded', () => {
+  const defaultZoneEl = document.getElementById(`zone-item-${defaultZone}`);
+  if (defaultZoneEl) defaultZoneEl.classList.add('active');
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ML Insights & Architecture | RidePulse NYC Demand Forecasting</title>
+  <meta name="description" content="Technical overview, spatial clustering, time-series lag feature engineering, XGBoost evaluation metrics, and chart gallery for NYC ride-share demand forecasting.">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700;800;900&display=swap" rel="stylesheet">
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <nav class="site-nav">
+    <div class="nav-inner">
+      <a href="/" class="nav-brand">
+        <div class="brand-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="3 11 22 2 13 21 11 13 3 11"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">RidePulse</span>
+          <span class="brand-sub">Smart Mobility NYC</span>
+        </div>
+      </a>
+
+      <div class="nav-links">
+        <a href="/" class="nav-link">Demand Forecast</a>
+        <a href="/insights" class="nav-link active">ML Insights</a>
+        <a href="#dataset" class="nav-link">Data</a>
+        <a href="#algorithms" class="nav-link">Algorithms</a>
+        <a href="#visualizations" class="nav-link">Visualisations</a>
+      </div>
+
+      <div class="nav-actions">
+        <a href="/" class="btn-cta">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          Back to Forecast
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <header class="insights-hero">
+    <h1>Machine Learning &amp; System Insights</h1>
+    <p>Comprehensive technical documentation of the geospatial clustering, time-series lag features, XGBoost regression model, and empirical evaluation metrics.</p>
+  </header>
+
+  <!-- Sticky In-Page Navigation -->
+  <div class="insights-tabs">
+    <div class="insights-tabs-inner">
+      <a href="#dataset" class="tab-link active">Dataset Overview</a>
+      <a href="#algorithms" class="tab-link">Implemented Algorithms</a>
+      <a href="#evaluation" class="tab-link">Model Evaluation</a>
+      <a href="#visualizations" class="tab-link">Chart Gallery</a>
+      <a href="#methodology" class="tab-link">Pipeline &amp; Limitations</a>
+    </div>
+  </div>
+
+  <!-- Main Content Body -->
+  <main class="insights-body">
+
+    <!-- Section 1: Dataset Overview -->
+    <section id="dataset" class="insight-section">
+      <div class="insight-section-header">
+        <div class="insight-section-icon">📊</div>
+        <div>
+          <h2>Dataset &amp; Geospatial Aggregation</h2>
+          <p>Statistical summary of the NYC taxi trip dataset, coordinate boundaries, and hourly time-series aggregation.</p>
+        </div>
+      </div>
+      <div class="insight-section-body">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value">{{ dataset_stats.raw_records }}</div>
+            <div class="stat-label">Raw Sample Records</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ dataset_stats.cleaned_records }}</div>
+            <div class="stat-label">Cleaned Valid Trips</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ dataset_stats.zones }}</div>
+            <div class="stat-label">Geographic Clusters</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">2015</div>
+            <div class="stat-label">{{ dataset_stats.date_range }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ dataset_stats.hourly_rows }}</div>
+            <div class="stat-label">Zone-Hourly Rows</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ dataset_stats.train_samples }}</div>
+            <div class="stat-label">Training Windows (80%)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ dataset_stats.test_samples }}</div>
+            <div class="stat-label">Evaluation Windows (20%)</div>
+          </div>
+        </div>
+
+        <div style="font-size: 0.9rem; line-height: 1.65; color: var(--text-body); display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+          <div>
+            <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--text-dark); margin-bottom: 0.5rem;">Geographic Bounding Box Filtering</h4>
+            <p style="color: var(--text-muted);">
+              NYC yellow taxi pickups from Kaggle (<code>sohaibanwaar1203/taxidemandfarepredictiondataset</code>) are filtered strictly within the bounding box of Latitude <code>[40.55, 40.95]</code> and Longitude <code>[-74.10, -73.70]</code>. Any trips with erroneous GPS readings outside Greater New York City, zero coordinates, or duplicates were filtered out (54 invalid rows dropped), resulting in 99,946 verified spatial events.
+            </p>
+          </div>
+          <div>
+            <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--text-dark); margin-bottom: 0.5rem;">Zone-Hourly Matrix Transformation</h4>
+            <p style="color: var(--text-muted);">
+              Raw discrete trip records were spatially assigned to K-Means clusters and aggregated into 1-hour time buckets. Every zone is tracked continuously across all 744 hours of the January 2015 calendar period (<code>20 zones × 744 hours = 14,880 total records</code>), preserving true zeros when zero rides were requested in a given zone and hour.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 2: Implemented Algorithms -->
+    <section id="algorithms" class="insight-section">
+      <div class="insight-section-header">
+        <div class="insight-section-icon">🧠</div>
+        <div>
+          <h2>Implemented Algorithms &amp; Feature Engineering</h2>
+          <p>Unsupervised spatial clustering, time-series lag construction, and gradient boosted regression architecture.</p>
+        </div>
+      </div>
+      <div class="insight-section-body">
+        <div class="algo-steps">
+          
+          <!-- Step 1 -->
+          <div class="algo-step">
+            <div class="algo-step-num">1</div>
+            <div style="flex: 1;">
+              <div class="algo-step-title">Data Preprocessing &amp; Boundary Filtering</div>
+              <div class="algo-step-desc">
+                High-throughput ingestion parses raw pickup timestamps into timezone-aware pandas datetime objects. Erroneous coordinates, out-of-bounds taxi trips, and missing sensor values are removed. Data is verified to adhere to standard NYC taxi trip distributions.
+              </div>
+              <div class="algo-tags">
+                <span class="algo-tag">pandas</span>
+                <span class="algo-tag">BoundingBox [40.55, 40.95]</span>
+                <span class="algo-tag">DateTime Parsing</span>
+                <span class="algo-tag">99,946 Clean Records</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2 -->
+          <div class="algo-step">
+            <div class="algo-step-num">2</div>
+            <div style="flex: 1;">
+              <div class="algo-step-title">Spatial Partitioning with MiniBatch K-Means (K=20)</div>
+              <div class="algo-step-desc">
+                Pickup latitude and longitude coordinates are clustered using MiniBatch K-Means into 20 coherent spatial zones across Manhattan, Brooklyn, and Queens. MiniBatch processing enables high scalability while converging on stable geospatial demand hubs.
+              </div>
+              <div class="algo-tags">
+                <span class="algo-tag">MiniBatchKMeans</span>
+                <span class="algo-tag">K = 20</span>
+                <span class="algo-tag">batch_size = 2048</span>
+                <span class="algo-tag">scikit-learn</span>
+                <span class="algo-tag">random_state = 42</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3 -->
+          <div class="algo-step">
+            <div class="algo-step-num">3</div>
+            <div style="flex: 1;">
+              <div class="algo-step-title">Time-Series Feature Engineering with Strict Shift (No Leakage)</div>
+              <div class="algo-step-desc">
+                For every zone-hour pair, chronological autoregressive lag features are constructed: <code>lag_1</code> (previous hour), <code>lag_2</code>, <code>lag_3</code>, <code>lag_24</code> (same hour yesterday), and <code>lag_168</code> (same hour last week). Rolling window statistics (<code>rolling_mean_3</code>, <code>rolling_mean_24</code>) are computed with strict <code>shift(1)</code> to guarantee zero target leakage into the future. Temporal features include <code>hour_of_day</code>, <code>day_of_week</code>, <code>day_of_month</code>, <code>month</code>, and <code>is_weekend</code>.
+              </div>
+              <div class="algo-tags">
+                <span class="algo-tag">13 Features</span>
+                <span class="algo-tag">Lags: 1, 2, 3, 24, 168</span>
+                <span class="algo-tag">Rolling Means: 3h, 24h</span>
+                <span class="algo-tag">shift(1) Leak-Free</span>
+                <span class="algo-tag">Calendar Cyclics</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 4 -->
+          <div class="algo-step">
+            <div class="algo-step-num">4</div>
+            <div style="flex: 1;">
+              <div class="algo-step-title">Supervised Demand Forecasting with XGBoost Regressor</div>
+              <div class="algo-step-desc">
+                An extreme gradient boosting regressor is trained on the chronological 80% split (9,216 samples) and evaluated on the holdout 20% test partition (2,304 samples). Objective function optimizes mean squared error over 300 boosting rounds with tree depth of 6 and learning rate of 0.05.
+              </div>
+              <div class="algo-tags">
+                <span class="algo-tag">XGBRegressor</span>
+                <span class="algo-tag">n_estimators = 300</span>
+                <span class="algo-tag">max_depth = 6</span>
+                <span class="algo-tag">learning_rate = 0.05</span>
+                <span class="algo-tag">subsample = 0.8</span>
+                <span class="algo-tag">colsample_bytree = 0.8</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Zone Clusters Table -->
+        <div style="margin-top: 2rem;">
+          <h3 style="font-family: var(--font-display); font-size: 1.05rem; font-weight: 800; color: var(--text-dark); margin-bottom: 0.8rem;">
+            Learned Spatial Zone Centroids (20 Clusters)
+          </h3>
+          <div style="max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-md);">
+            <table class="zone-table">
+              <thead>
+                <tr>
+                  <th style="width: 70px;">Zone ID</th>
+                  <th>Area / Neighbourhood</th>
+                  <th>Centroid Latitude</th>
+                  <th>Centroid Longitude</th>
+                  <th style="text-align: right;">Historical Mean (rides/hr)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for z in zone_table %}
+                <tr>
+                  <td><strong>#{{ z.zone }}</strong></td>
+                  <td><strong>{{ z.name }}</strong></td>
+                  <td><code>{{ z.lat }}</code></td>
+                  <td><code>{{ z.lon }}</code></td>
+                  <td style="text-align: right; font-weight: 700; color: var(--primary-dark);">{{ z.avg_demand }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Section 3: Model Evaluation -->
+    <section id="evaluation" class="insight-section">
+      <div class="insight-section-header">
+        <div class="insight-section-icon">📈</div>
+        <div>
+          <h2>Empirical Model Evaluation</h2>
+          <p>Real evaluation metrics calculated on the 2,304 test samples holdout set (20% chronological split).</p>
+        </div>
+      </div>
+      <div class="insight-section-body">
+        
+        <div class="metrics-row">
+          
+          <div class="metric-card">
+            <div class="metric-card-top">
+              <span class="metric-name">Mean Absolute Error</span>
+              <span class="metric-tag">MAE</span>
+            </div>
+            <div class="metric-value">{{ metrics.MAE }}</div>
+            <div class="metric-desc">
+              On average, the XGBoost forecast differs from actual hourly pickups by approximately <strong>{{ metrics.MAE }} rides</strong> per zone-hour across all test periods.
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-card-top">
+              <span class="metric-name">Root Mean Squared Error</span>
+              <span class="metric-tag">RMSE</span>
+            </div>
+            <div class="metric-value">{{ metrics.RMSE }}</div>
+            <div class="metric-desc">
+              Heavily penalizes large deviation outliers. At <strong>{{ metrics.RMSE }}</strong>, errors during peak spikes remain tightly bounded relative to the total demand range.
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-card-top">
+              <span class="metric-name">Coefficient of Determination</span>
+              <span class="metric-tag">R² Score</span>
+            </div>
+            <div class="metric-value">{{ metrics.R2 }}</div>
+            <div class="metric-desc">
+              The model explains <strong>{{ (metrics.R2 | float * 100) | round(1) }}%</strong> of the variance in zone-level hourly demand in an inherently zero-heavy, stochastic spatial dataset.
+            </div>
+          </div>
+
+        </div>
+
+        <div style="background: var(--gray-50); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 1.25rem 1.5rem; font-size: 0.88rem; line-height: 1.6; color: var(--text-body);">
+          <strong style="color: var(--text-dark);">Evaluation Context &amp; Real Mobility Dynamics:</strong>
+          <p style="margin-top: 0.4rem; color: var(--text-muted);">
+            In fine-grained spatial demand forecasting across 20 NYC zones and 744 hourly windows, demand varies from quiet early mornings to intense evening surges up to 86 rides/hr in Midtown hubs. An MAE of <strong>{{ metrics.MAE }}</strong> and an R² of <strong>{{ metrics.R2 }}</strong> on the un-shuffled chronological test set confirm that the engineered lag features and rolling windows effectively capture commuting rhythms and spatial concentration.
+          </p>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Section 4: Visualizations Gallery -->
+    <section id="visualizations" class="insight-section">
+      <div class="insight-section-header">
+        <div class="insight-section-icon">🖼️</div>
+        <div>
+          <h2>Model Performance &amp; Analysis Visualisations</h2>
+          <p>Generated evaluation artifacts directly from the model training and feature extraction pipeline. Click any chart to expand.</p>
+        </div>
+      </div>
+      <div class="insight-section-body">
+        
+        <div class="viz-grid">
+
+          <!-- Chart 1 -->
+          <div class="viz-card">
+            <div class="viz-card-header">
+              <div class="viz-card-title">Actual vs Predicted Demand</div>
+              <div class="viz-card-desc">Scatter correlation of ground-truth test labels versus model forecasts.</div>
+            </div>
+            <div class="viz-img-wrap" onclick="openModal('/outputs/actual_vs_predicted.png')">
+              <img src="/outputs/actual_vs_predicted.png" alt="Actual vs Predicted Demand Plot" loading="lazy">
+              <span class="viz-zoom">🔍 Click to zoom</span>
+            </div>
+          </div>
+
+          <!-- Chart 2 -->
+          <div class="viz-card">
+            <div class="viz-card-header">
+              <div class="viz-card-title">Geographical Zone Clusters</div>
+              <div class="viz-card-desc">Spatial distribution of NYC taxi pickups colored by K-Means cluster assignment.</div>
+            </div>
+            <div class="viz-img-wrap" onclick="openModal('/outputs/geographical_zones.png')">
+              <img src="/outputs/geographical_zones.png" alt="Geographical Zones Cluster Scatter Plot" loading="lazy">
+              <span class="viz-zoom">🔍 Click to zoom</span>
+            </div>
+          </div>
+
+          <!-- Chart 3 -->
+          <div class="viz-card">
+            <div class="viz-card-header">
+              <div class="viz-card-title">Demand Over Time (2015)</div>
+              <div class="viz-card-desc">Macro longitudinal trip volume across the full year of observation.</div>
+            </div>
+            <div class="viz-img-wrap" onclick="openModal('/outputs/demand_over_time.png')">
+              <img src="/outputs/demand_over_time.png" alt="Longitudinal Demand Over Time Plot" loading="lazy">
+              <span class="viz-zoom">🔍 Click to zoom</span>
+            </div>
+          </div>
+
+          <!-- Chart 4 -->
+          <div class="viz-card">
+            <div class="viz-card-header">
+              <div class="viz-card-title">XGBoost Feature Importance</div>
+              <div class="viz-card-desc">Relative ranking of time-series lags and temporal indicators in decision trees.</div>
+            </div>
+            <div class="viz-img-wrap" onclick="openModal('/outputs/feature_importance.png')">
+              <img src="/outputs/feature_importance.png" alt="Feature Importance Plot" loading="lazy">
+              <span class="viz-zoom">🔍 Click to zoom</span>
+            </div>
+          </div>
+
+          <!-- Chart 5 -->
+          <div class="viz-card">
+            <div class="viz-card-header">
+              <div class="viz-card-title">Diurnal Hourly Demand Pattern</div>
+              <div class="viz-card-desc">Average ride count across 24 hours showing morning and evening peak commutes.</div>
+            </div>
+            <div class="viz-img-wrap" onclick="openModal('/outputs/hourly_demand_pattern.png')">
+              <img src="/outputs/hourly_demand_pattern.png" alt="Diurnal Hourly Demand Pattern" loading="lazy">
+              <span class="viz-zoom">🔍 Click to zoom</span>
+            </div>
+          </div>
+
+          <!-- Chart 6 -->
+          <div class="viz-card">
+            <div class="viz-card-header">
+              <div class="viz-card-title">Zone-by-Zone Demand Distribution</div>
+              <div class="viz-card-desc">Aggregate historical ride volume comparison across all 20 spatial clusters.</div>
+            </div>
+            <div class="viz-img-wrap" onclick="openModal('/outputs/zone_demand.png')">
+              <img src="/outputs/zone_demand.png" alt="Zone Demand Distribution Bar Chart" loading="lazy">
+              <span class="viz-zoom">🔍 Click to zoom</span>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Section 5: Pipeline & Limitations -->
+    <section id="methodology" class="insight-section">
+      <div class="insight-section-header">
+        <div class="insight-section-icon">⚙️</div>
+        <div>
+          <h2>End-to-End Pipeline &amp; System Limitations</h2>
+          <p>Architectural dataflow diagram and engineering constraints to consider in real-world deployment.</p>
+        </div>
+      </div>
+      <div class="insight-section-body">
+        
+        <!-- Pipeline Diagram -->
+        <h4 style="font-family: var(--font-display); font-size: 0.95rem; font-weight: 800; color: var(--text-dark); margin-bottom: 1.25rem;">
+          End-to-End Machine Learning Pipeline
+        </h4>
+        <div class="pipeline-steps" style="margin-bottom: 2.5rem;">
+          
+          <div class="pipeline-step">
+            <div class="pipeline-step-box">Raw NYC Taxi Data</div>
+            <div class="pipeline-step-label">100k Pickups</div>
+          </div>
+
+          <div class="pipeline-arrow">➔</div>
+
+          <div class="pipeline-step">
+            <div class="pipeline-step-box">Spatial &amp; Time Preprocessing</div>
+            <div class="pipeline-step-label">BBox Filter &amp; Clean</div>
+          </div>
+
+          <div class="pipeline-arrow">➔</div>
+
+          <div class="pipeline-step">
+            <div class="pipeline-step-box">MiniBatch K-Means</div>
+            <div class="pipeline-step-label">20 Clusters (Zones)</div>
+          </div>
+
+          <div class="pipeline-arrow">➔</div>
+
+          <div class="pipeline-step">
+            <div class="pipeline-step-box">Hourly Zone Aggregation</div>
+            <div class="pipeline-step-label">14,880 Rows</div>
+          </div>
+
+          <div class="pipeline-arrow">➔</div>
+
+          <div class="pipeline-step">
+            <div class="pipeline-step-box">Autoregressive Lag Features</div>
+            <div class="pipeline-step-label">Lags 1-168, Rolling</div>
+          </div>
+
+          <div class="pipeline-arrow">➔</div>
+
+          <div class="pipeline-step">
+            <div class="pipeline-step-box">XGBoost Regression</div>
+            <div class="pipeline-step-label">300 Trees (Depth 6)</div>
+          </div>
+
+          <div class="pipeline-arrow">➔</div>
+
+          <div class="pipeline-step">
+            <div class="pipeline-step-box">Interactive Web Forecast</div>
+            <div class="pipeline-step-label">Flask API + UI</div>
+          </div>
+
+        </div>
+
+        <!-- Limitations List -->
+        <h4 style="font-family: var(--font-display); font-size: 0.95rem; font-weight: 800; color: var(--text-dark); margin-bottom: 1rem;">
+          Engineering Assumptions &amp; Deployment Limitations
+        </h4>
+        <div class="limitation-list">
+          
+          <div class="limitation-item">
+            <span class="limitation-icon">⏱️</span>
+            <div>
+              <strong>Single-Step Horizon (Next 1-Hour Forecast):</strong> The current pipeline is engineered as a single-step autoregressive regressor. It forecasts demand for a single specified hour rather than recursive multi-horizon trajectories. For multi-hour planning, sequential autoregressive rolling or direct multi-output models would be required.
+            </div>
+          </div>
+
+          <div class="limitation-item">
+            <span class="limitation-icon">📍</span>
+            <div>
+              <strong>Geographic Boundary Enforcement:</strong> Pickups originating outside the NYC bounding box (latitude 40.55 to 40.95, longitude -74.10 to -73.70) are filtered out during training. Rides originating in upstate New York, Connecticut, or deep New Jersey are excluded from zone clustering.
+            </div>
+          </div>
+
+          <div class="limitation-item">
+            <span class="limitation-icon">🌦️</span>
+            <div>
+              <strong>Exogenous Context Signals:</strong> The current model features exclusively calendar signals and autoregressive lags. Real-world mobility is significantly influenced by extreme weather events (rain, blizzards), transit subway disruptions, and stadium events. Integrating NOAA weather feeds would increase peak-hour predictive accuracy.
+            </div>
+          </div>
+
+          <div class="limitation-item">
+            <span class="limitation-icon">📉</span>
+            <div>
+              <strong>Zero-Inflation in Outlying Zones:</strong> Peripheral zones (such as Zone 14 in Northern Manhattan or Zone 12 in East Queens) experience frequent zero-pickup hours, leading to a zero-inflated demand distribution. A two-stage hurdle model (classifier for zero/non-zero + regressor for positive demand) could further refine predictions in peripheral clusters.
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Image Expansion Modal -->
+  <div class="modal-overlay" id="imgModal" onclick="closeModalOnOverlay(event)">
+    <div class="modal-content">
+      <button class="modal-close" onclick="closeModal()" title="Close">&times;</button>
+      <img id="modalImg" class="modal-img" src="" alt="Expanded View">
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div style="max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; gap: 0.75rem;">
+      <div>
+        <strong>RidePulse NYC Demand Forecasting</strong> &bull; Smart Cities &amp; Geospatial Logistics
+      </div>
+      <div style="font-size: 0.78rem; color: var(--text-dim); display: flex; gap: 1.5rem;">
+        <a href="/">Demand Forecast Map</a>
+        <a href="/insights">Technical Insights</a>
+        <span>MiniBatch K-Means + XGBoost ML Pipeline</span>
+        <span>NYC Open Data (2014)</span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Modal Script -->
+  <script>
+    function openModal(src) {
+      const modal = document.getElementById('imgModal');
+      const img = document.getElementById('modalImg');
+      img.src = src;
+      modal.classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeModal() {
+      const modal = document.getElementById('imgModal');
+      modal.classList.remove('open');
+      document.body.style.overflow = '';
+    }
+
+    function closeModalOnOverlay(e) {
+      if (e.target.id === 'imgModal') {
+        closeModal();
+      }
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        closeModal();
+      }
+    });
+
+    // Smooth scroll and active tab highlighting for in-page anchors
+    document.querySelectorAll('.tab-link').forEach(link => {
+      link.addEventListener('click', function(e) {
+        document.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+        this.classList.add('active');
+      });
+    });
+  </script>
+
+</body>
+</html>

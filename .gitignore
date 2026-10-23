@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+.venv/
+venv/
+env/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Data and Artifacts (except sample gitkeep)
+data/*.csv
+data/*.parquet
+!data/.gitkeep
+models/*.pkl
+models/*.joblib
+models/*.json
+!models/.gitkeep
+outputs/*.png
+outputs/*.jpg
+outputs/*.csv
+!outputs/.gitkeep
+
+# IDE
+.vscode/
+.idea/
